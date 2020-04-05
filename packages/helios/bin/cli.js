@@ -91,3 +91,61 @@ const stripEndingSlash = require('@joystream/util/stripEndingSlash');
     let [relationships, judgement] = await assetRelationshipState(api, contentId, storageProviders);
     console.log(`${encodeAddress(contentId)} replication ${relationships}/${storageProviders.length} - ${judgement}`);
   }));
+
+  function mapInfoToStatus(providers, currentHeight) {
+  return providers.map(({account, info, joined}) => {
+    if (info) {
+      return {
+        address: account.toString(),
+        age: currentHeight.sub(joined).toNumber(),
+        identity: info.identity.toString(),
+        expiresIn: info.expires_at.sub(currentHeight).toNumber(),
+        expired: currentHeight.gte(info.expires_at),
+      }
+    } else {
+      return {
+        address: account.toString(),
+        identity: null,
+        status: 'down'
+      }
+    }
+  })
+}
+
+async function countContentAvailability(contentIds, source) {
+  let content = {}
+  let found = 0;
+  for(let i = 0; i < contentIds.length; i++) {
+    const assetUrl = makeAssetUrl(contentIds[i], source);
+    try {
+      let info = await axios.head(assetUrl)
+      content[encodeAddress(contentIds[i])] = {
+        type: info.headers['content-type'],
+        bytes: info.headers['content-length']
+      }
+      found++
+    } catch(err) { console.log(`${assetUrl} ${err.message}`); continue; }
+  }
+  console.log(content);
+  return { found, content };
+}
+
+function makeAssetUrl(contentId, source) {
+  source = stripEndingSlash(source);
+  return `${source}/asset/v0/${encodeAddress(contentId)}`
+}
+
+async function assetRelationshipState(api, contentId, providers) {
+  let dataObject = await api.query.dataDirectory.dataObjectByContentId(contentId);
+
+  // how many relationships out of active providers?
+  let relationshipIds = await api.query.dataObjectStorageRegistry.relationshipsByContentId(contentId);
+
+  let activeRelationships = await Promise.all(relationshipIds.map(async (id) => {
+    let relationship = await api.query.dataObjectStorageRegistry.relationships(id);
+    relationship = relationship.unwrap()
+    return providers.find((provider) => relationship.storage_provider.eq(provider))
+  }));
+
+  return [activeRelationships.filter(active => active).length, dataObject.unwrap().liaison_judgement]
+}
