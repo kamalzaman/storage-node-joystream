@@ -92,15 +92,6 @@ const stripEndingSlash = require('@joystream/util/stripEndingSlash');
     console.log(`${encodeAddress(contentId)} replication ${relationships}/${storageProviders.length} - ${judgement}`);
   }));
 
-  console.log('\nChecking available assets on providers...');
-
-  endpoints.map(async ({address, endpoint}) => {
-    if (!endpoint) { return }
-    let { found, content } = await countContentAvailability(knownContentIds, endpoint);
-    console.log(`${address}: has ${found} assets`);
-    return content
-  });
-
 
   // interesting disconnect doesn't work unless an explicit provider was created
   // for underlying api instance
@@ -127,28 +118,6 @@ function mapInfoToStatus(providers, currentHeight) {
   })
 }
 
-async function countContentAvailability(contentIds, source) {
-  let content = {}
-  let found = 0;
-  for(let i = 0; i < contentIds.length; i++) {
-    const assetUrl = makeAssetUrl(contentIds[i], source);
-    try {
-      let info = await axios.head(assetUrl)
-      content[encodeAddress(contentIds[i])] = {
-        type: info.headers['content-type'],
-        bytes: info.headers['content-length']
-      }
-      found++
-    } catch(err) { console.log(`${assetUrl} ${err.message}`); continue; }
-  }
-  console.log(content);
-  return { found, content };
-}
-
-function makeAssetUrl(contentId, source) {
-  source = stripEndingSlash(source);
-  return `${source}/asset/v0/${encodeAddress(contentId)}`
-}
 
 async function assetRelationshipState(api, contentId, providers) {
   let dataObject = await api.query.dataDirectory.dataObjectByContentId(contentId);
