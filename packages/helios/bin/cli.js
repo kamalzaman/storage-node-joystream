@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const { RuntimeApi } = require('@joystream/runtime-api');
-const { encodeAddress } = require('@polkadot/keyring')
 const { discover } = require('@joystream/discovery');
 const axios = require('axios');
 const stripEndingSlash = require('@joystream/util/stripEndingSlash');
@@ -26,9 +25,6 @@ const stripEndingSlash = require('@joystream/util/stripEndingSlash');
     });
   }));
 
-  const liveProviders = storageProviderAccountInfos.filter(({account, info}) => {
-    return info && info.expires_at.gte(currentHeight)
-  });
 
   const downProviders = storageProviderAccountInfos.filter(({account, info}) => {
     return info == null
@@ -38,8 +34,6 @@ const stripEndingSlash = require('@joystream/util/stripEndingSlash');
     return info && currentHeight.gte(info.expires_at)
   });
 
-  let providersStatuses = mapInfoToStatus(liveProviders, currentHeight);
-  console.log('\n== Live Providers\n', providersStatuses);
 
   let expiredProviderStatuses = mapInfoToStatus(expiredTtlProviders, currentHeight)
   console.log('\n== Expired Providers\n', expiredProviderStatuses);
@@ -52,47 +46,9 @@ const stripEndingSlash = require('@joystream/util/stripEndingSlash');
     })
   }));
 
-  // Resolve IPNS identities of providers
-  console.log('\nResolving live provider API Endpoints...')
-  //providersStatuses = providersStatuses.concat(expiredProviderStatuses);
-  let endpoints = await Promise.all(providersStatuses.map(async (status) => {
-    try {
-      let serviceInfo = await discover.discover_over_joystream_discovery_service(status.address, runtime);
-      let info = JSON.parse(serviceInfo.serialized);
-      console.log(`${status.address} -> ${info.asset.endpoint}`);
-      return { address: status.address, endpoint: info.asset.endpoint};
-    } catch (err) {
-      console.log('resolve failed', status.address, err.message);
-      return { address: status.address, endpoint: null};
-    }
-  }));
-
-  console.log('\nChecking API Endpoint is online')
-  await Promise.all(endpoints.map(async (provider) => {
-    if (!provider.endpoint) {
-      console.log('skipping', provider.address);
-      return
-    }
-    const swaggerUrl = `${stripEndingSlash(provider.endpoint)}/swagger.json`;
-    let error;
-    try {
-      await axios.get(swaggerUrl)
-    } catch (err) {error = err}
-    console.log(`${provider.endpoint} - ${error ? error.message : 'OK'}`);
-  }));
 
   // after resolving for each resolved provider, HTTP HEAD with axios all known content ids
   // report available/known
-  let knownContentIds = await runtime.assets.getKnownContentIds()
-
-  console.log(`\nContent Directory has ${knownContentIds.length} assets`);
-
-  await Promise.all(knownContentIds.map(async (contentId) => {
-    let [relationships, judgement] = await assetRelationshipState(api, contentId, storageProviders);
-    console.log(`${encodeAddress(contentId)} replication ${relationships}/${storageProviders.length} - ${judgement}`);
-  }));
-
-
   // interesting disconnect doesn't work unless an explicit provider was created
   // for underlying api instance
   runtime.api.disconnect();
@@ -119,17 +75,3 @@ function mapInfoToStatus(providers, currentHeight) {
 }
 
 
-async function assetRelationshipState(api, contentId, providers) {
-  let dataObject = await api.query.dataDirectory.dataObjectByContentId(contentId);
-
-  // how many relationships out of active providers?
-  let relationshipIds = await api.query.dataObjectStorageRegistry.relationshipsByContentId(contentId);
-
-  let activeRelationships = await Promise.all(relationshipIds.map(async (id) => {
-    let relationship = await api.query.dataObjectStorageRegistry.relationships(id);
-    relationship = relationship.unwrap()
-    return providers.find((provider) => relationship.storage_provider.eq(provider))
-  }));
-
-  return [activeRelationships.filter(active => active).length, dataObject.unwrap().liaison_judgement]
-}
